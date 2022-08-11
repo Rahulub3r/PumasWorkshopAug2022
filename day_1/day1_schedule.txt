@@ -1,0 +1,12 @@
+Day 1 Schedule:
+
+830 - 930: Julia basics 
+930 - 1045: NCA 
+BREAK (1045 - 11) 
+11 - 1130: NCA overflow / BE
+1130 - 1230: data diagnosis 
+
+Homework:
+- perform data diagnsosis & NCA analysis on data from phmx_demo.csv file in "homework" folder
+- this is the data we will be used to demonstrate model building tomorrow 
+    (so it will be good to familiarize yourself)
