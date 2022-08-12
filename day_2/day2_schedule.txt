@@ -1,0 +1,11 @@
+Day 2 Schedule:
+
+830 - 845: Review data we will be working with (summary stats, ADME properties)
+845 - 945: Overview of model object & modeling basics (Naive pooled, two stage)
+945 - 1030: One stage modeling overview
+BREAK (1030 - 1045) 
+1045 - 1130: RUV/CMT model selection & diagnostics
+1130 - 1230: Simulations 
+
+
+
