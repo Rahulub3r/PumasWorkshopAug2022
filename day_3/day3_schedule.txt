@@ -1,0 +1,11 @@
+Day 3 Schedule:
+
+830 - 845: Review final structural model from yesterday
+845 - 915: Assessment of BSV and covariate inclusion 
+915 - 1030: Covariate model building 
+BREAK (1030 - 1045) 
+1045 - 1130: Covariate model building (if more to touch on) + Simulations with final model 
+1130 - 1230: Model Qualification
+
+
+
