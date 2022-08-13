@@ -1,0 +1,921 @@
+---
+title : Metabolism 
+subtitle: Overview of Parent-Metabolite Modeling 
+author : CTM
+---
+
+# Parent-Metabolite Model Type: 
+1. Simple 2 compartment irreversible metabolism  -- Central1Periph1Meta1()
+    - Linear vs Non-linear transformation 
+2. Multi-compartment metabolite distribution -- Central1Periph1Meta1Periph1()
+3. Reversible metabolism 
+
+# Parent-Metabolite Modeling Approaches:
+1. Simultaneous
+2. Sequential
+    - Model parent drug only
+    - Fix all PK parameters of parent and then estimate metabolite PK parameters 
+
+Note: Some examples are from the PKPD Data Analysis: Concepts and Applications 
+textbook (author: Johan Gabrielsson & Dan Weiner) if you would like to reference
+
+
+
+
+# Call Necessary Packages 
+```julia
+using Pumas
+using PumasUtilities
+using CSV 
+using Random
+using DataFrames
+using DataFramesMeta
+using CairoMakie
+using Pumas.Latexify
+```
+
+
+
+# Parent-Metabolite Model Type Examples 
+## Linear, Irreversible Metabolism 
+```julia 
+
+lin_irrev = @model begin
+  @metadata begin
+    desc         = "Linear, Irreversible Metabolism (2CMT PARENT, 1CMT METAB)"
+    timeu        = u"hr"
+  end
+
+  @param begin
+    "Total Body Clearance - Parent (L/hr)"
+    tvcl        ∈ RealDomain(lower=0.0001)
+    "Volume of Central Compartment - Parent (L)"
+    tvvc        ∈ RealDomain(lower=0.0001)
+    "Intercompartmental Clearance - Parent (L/hr)"
+    tvq         ∈ RealDomain(lower=0.0001)
+    "Volume of Peripheral Compartment - Parent (L)"
+    tvvp        ∈ RealDomain(lower=0.0001)
+    "Conversion of Parent to Metabolite (L/hr)"
+    tvclfm      ∈ RealDomain(lower=0.0001)
+    "Total Body Clearance - Metabolite (L/hr)"
+    tvclm       ∈ RealDomain(lower=0.0001)
+    "Volume of Central Compartment - Metabolite (L)"
+    tvvcm       ∈ RealDomain(lower=0.0001)
+    Ω           ∈ PDiagDomain(7)
+    "Proportional RUV"
+    σ²_prop     ∈ RealDomain(lower=0.0001)
+  end
+
+  @random begin
+    η            ~ MvNormal(Ω)
+  end
+
+  @pre begin
+    CL      = tvcl   * exp(η[1])
+    Vc      = tvvc   * exp(η[2])
+    Q       = tvq    * exp(η[3])
+    Vp      = tvvp   * exp(η[4])
+    CLm     = tvclm  * exp(η[5])
+    Vm      = tvvcm  * exp(η[6])
+    CLfm    = tvclfm * exp(η[7])
+  end
+
+  #@dynamics Central1Periph1Meta1
+  @dynamics begin
+    Central'     = -(CL/Vc)*Central - (Q/Vc)*Central + (Q/Vp)*CPeripheral - (CLfm/Vc)*Central 
+    CPeripheral' =                    (Q/Vc)*Central - (Q/Vp)*CPeripheral
+    Metabolite'  =  (CLfm/Vc)*Central - (CLm/Vm)*Metabolite
+  end
+
+  @derived begin
+    CONC_P = @. Central/Vc
+    CONC_M = @. Metabolite/Vm
+    """
+    Observed Concentration - Parent 
+    """
+    DV_P ~ @. Normal(CONC_P, sqrt(CONC_P^2*σ²_prop))
+    """
+    Observed Concentration - Metabolite (uM)
+    """
+    DV_M ~ @. Normal(CONC_M, sqrt(CONC_M^2*σ²_prop))
+  end
+end
+
+#render(latexify(lin_irrev, :dynamics))
+
+
+param = (
+        tvcl = 0.5,
+        tvvc = 1,     
+        tvq = 0.2,
+        tvvp = 10,
+        tvclfm = 6,
+        tvclm = 2.1,
+        tvvcm = 1.5,
+        Ω = Diagonal([0.01,0.01,0.01,0.01,0.01,0.01,0.01]),
+        σ²_prop = 0)
+#
+ev  = DosageRegimen(100, time = 0, cmt=1)
+sub = Subject(id = 1, events = ev)
+sim_sub = simobs(lin_irrev, sub, param, obstimes = 0.0001:0.01:4)
+
+sim_plot(sim_sub, 
+        observations = [:CONC_P,:CONC_M], 
+        linewidth = 4,
+        color = :redsblues,
+        axis = (xlabel = "Time (hr)", 
+                ylabel = "Concentration (mg/L)"))
+#    
+sim_plot(sim_sub, 
+        observations = [:CONC_P,:CONC_M], 
+        linewidth = 4,
+        color = :redsblues,
+        axis = (xlabel = "Time (hr)", 
+                ylabel = "Concentration (mg/L)",
+                yscale = log))
+#                
+```
+
+
+
+## Multi-Compartment Metabolite Distribution (Linear, Irreversible)
+```julia 
+
+lin_irrev_2cmt = @model begin
+  @metadata begin
+    desc         = "Linear, Irreversible Metabolism (2CMT PARENT, 2CMT METAB)"
+    timeu        = u"hr"
+  end
+
+  @param begin
+    "Total Body Clearance - Parent (L/hr)"
+    tvcl        ∈ RealDomain(lower=0.0001)
+    "Volume of Central Compartment - Parent (L)"
+    tvvc        ∈ RealDomain(lower=0.0001)
+    "Intercompartmental Clearance - Parent (L/hr)"
+    tvq         ∈ RealDomain(lower=0.0001)
+    "Volume of Peripheral Compartment - Parent (L)"
+    tvvp        ∈ RealDomain(lower=0.0001)
+    "Conversion of Parent to Metabolite (L/hr)"
+    tvclfm      ∈ RealDomain(lower=0.0001)
+    "Total Body Clearance - Metabolite (L/hr)"
+    tvclm       ∈ RealDomain(lower=0.0001)
+    "Volume of Central Compartment - Metabolite (L)"
+    tvvcm       ∈ RealDomain(lower=0.0001)
+    "Intercompartmental Clearance - Metabolite (L/hr)"
+    tvqm         ∈ RealDomain(lower=0.0001)
+    "Volume of Peripheral Compartment - Metabolite (L)"
+    tvvmp        ∈ RealDomain(lower=0.0001)
+    Ω           ∈ PDiagDomain(7)
+    "Proportional RUV"
+    σ²_prop     ∈ RealDomain(lower=0.0001)
+  end
+
+  @random begin
+    η            ~ MvNormal(Ω)
+  end
+
+  @pre begin
+    CL      = tvcl   * exp(η[1])
+    Vc      = tvvc   * exp(η[2])
+    Q       = tvq    * exp(η[3])
+    Vp      = tvvp   * exp(η[4])
+    CLm     = tvclm  * exp(η[5])
+    Vm      = tvvcm  * exp(η[6])
+    Qm      = tvqm    * exp(η[3])
+    Vmp     = tvvmp   * exp(η[4])
+    CLfm    = tvclfm * exp(η[7])
+  end
+
+  #@dynamics Central1Periph1Meta1Periph1
+  @dynamics begin
+        Central'     =  - (Q/Vc)*Central + (Q/Vp)*CPeripheral       - (CLfm/Vc)*Central - (CL/Vc)*Central
+        CPeripheral' =    (Q/Vc)*Central - (Q/Vp)*CPeripheral
+        Metabolite'  =  - (Qm/Vm)*Metabolite + (Qm/Vmp)*MPeripheral + (CLfm/Vc)*Central - (CLm/Vm)*Metabolite
+        MPeripheral' =    (Qm/Vm)*Metabolite - (Qm/Vmp)*MPeripheral
+    end
+
+  @derived begin
+    CONC_P = @. Central/Vc
+    CONC_M = @. Metabolite/Vm
+    """
+    Observed Concentration - Parent 
+    """
+    DV_P ~ @. Normal(CONC_P, sqrt(CONC_P^2*σ²_prop))
+    """
+    Observed Concentration - Metabolite (uM)
+    """
+    DV_M ~ @. Normal(CONC_M, sqrt(CONC_M^2*σ²_prop))
+  end
+end
+
+#render(latexify(lin_irrev_2cmt, :dynamics))
+
+param = (
+        tvcl = 0.004,
+        tvvc = 20,     
+        tvq = 0.5,
+        tvvp = 10,
+        tvclfm = 3,
+        tvclm = 0.8,
+        tvvcm = 6,
+        tvqm   = 0.2,
+        tvvmp = 5,
+        Ω = Diagonal([0.0,0.0,0.0,0.0,0.0,0.0,0.0]),
+        σ²_prop = 0)
+#
+ev  = DosageRegimen(500, time = 0, cmt=1)
+sub = Subject(id = 1, events = ev)
+sim_sub = simobs(lin_irrev_2cmt, sub, param, obstimes = 0.001:0.1:96)
+
+sim_plot(sim_sub, 
+        observations = [:CONC_P,:CONC_M], 
+        linewidth = 4,
+        color = :redsblues,
+        axis = (xlabel = "Time (hr)", 
+                ylabel = "Concentration (mg/L)"))
+#
+sim_plot(sim_sub, 
+        observations = [:CONC_P,:CONC_M], 
+        linewidth = 4,
+        color = :redsblues,
+        axis = (xlabel = "Time (hr)", 
+                ylabel = "Concentration (mg/L)",
+                yscale = log10))
+#
+```
+
+
+
+
+
+
+## Non-linear, Irreversible Metabolism 
+```julia 
+
+nonlin_irrev = @model begin
+  @metadata begin
+    desc         = "Non-Linear, Irreversible Metabolism (1CMT PARENT, 1CMT METAB)"
+    timeu        = u"hr"
+  end
+
+  @param begin
+    "Volume of Central Compartment - Parent (L)"
+    tvvc        ∈ RealDomain(lower=0.0001)
+    "Maximum Velocity of Reaction (μmol/min)"
+    tvvmax      ∈ RealDomain(lower=0)
+    "Michaelis-Menten constant (μmol/L)"
+    tvkm        ∈ RealDomain(lower=0)
+    "Rate of Elimination of Metabolite (min⁻¹)"
+    tvkme       ∈ RealDomain(lower=0)
+    "Volume of Metabolite Compartment (L)"
+    tvvme       ∈ RealDomain(lower=0)
+    Ω           ∈ PDiagDomain(5)
+    "Proportional RUV"
+    σ²_prop  ∈ RealDomain(lower=0)
+  end
+
+  @random begin
+    η            ~ MvNormal(Ω)
+  end
+
+  @pre begin
+    Vc      = tvvc   * exp(η[1])
+    # note that ALL of parent is being metabolized 
+    Vmax    = tvvmax * exp(η[2])
+    Km      = tvkm   * exp(η[3])
+    Kme     = tvkme  * exp(η[4]) 
+    Vme     = tvvme  * exp(η[5]) # only used in derive block 
+  end
+
+  @vars begin 
+    CL := Vmax/(Km+(Central/Vc))
+  end 
+
+  @dynamics begin
+    Central'     = -(CL/Vc)*Central 
+    Metabolite'  =  (CL/Vc)*Central - Kme*Metabolite
+  end
+
+  @derived begin
+    CONC_P = @. Central/Vc
+    CONC_M = @. Metabolite/Vme
+    """
+    Observed Concentration - Parent (uM)
+    """
+    DV_P ~ @. Normal(CONC_P, sqrt(CONC_P^2*σ²_prop))
+    """
+    Observed Concentration - Metabolite (uM)
+    """
+    DV_M ~ @. Normal(CONC_M, sqrt(CONC_M^2*σ²_prop))
+  end
+end
+
+render(latexify(nonlin_irrev, :dynamics))
+
+param = (
+        tvvc = 5,     
+        tvvmax = 5, 
+        tvkm = 2.5,
+        tvkme = 0.2,
+        tvvme = 0.3,
+        Ω = Diagonal([0.0,0.0,0.0,0.0,0.0,0.0,0.0]),
+        σ²_prop = 0)
+#
+ev  = DosageRegimen(200, time = 0, cmt=1)
+sub = Subject(id = 1, events = ev)
+sim_sub = simobs(nonlin_irrev, sub, param, obstimes = 0.0001:0.1:120)
+
+sim_plot(sim_sub, 
+        observations = [:CONC_P,:CONC_M], 
+        linewidth = 4,
+        color = :redsblues,
+        axis = (xlabel = "Time (hr)", 
+                ylabel = "Concentration (mg/L)"))
+#
+sim_plot(sim_sub, 
+        observations = [:CONC_P], 
+        linewidth = 4,
+        color = :redsblues,
+        axis = (xlabel = "Time (hr)", 
+                ylabel = "Concentration (mg/L)"))
+#
+sim_plot(sim_sub, 
+        observations = [:CONC_P], 
+        linewidth = 4,
+        color = :redsblues,
+        axis = (xlabel = "Time (hr)", 
+                ylabel = "Concentration (mg/L)",
+                yscale = log10))
+#
+```
+
+# COMPARISON TO LINEAR MODEL 
+```julia 
+lin_met = @model begin
+  @metadata begin
+    desc         = "Linear Metabolism (1CMT PARENT, 1CMT METAB)"
+    timeu        = u"hr"
+  end
+
+  @param begin
+    "Volume of Central Compartment - Parent (L)"
+    tvvc        ∈ RealDomain(lower=0.0001)
+    "Clearance - Parent (L/min)"
+    tvcl      ∈ RealDomain(lower=0.0001)
+    "Rate of Elimination of Metabolite (min⁻¹)"
+    tvkme       ∈ RealDomain(lower=0.0001)
+    "Volume of Metabolite Compartment (L)"
+    tvvme       ∈ RealDomain(lower=0.0001)
+    Ω           ∈ PDiagDomain(4)
+    "Proportional RUV"
+    σ²_prop  ∈ RealDomain(lower=0.0001)
+  end
+
+  @random begin
+    η            ~ MvNormal(Ω)
+  end
+
+  @pre begin
+    Vc      = tvvc   * exp(η[1])
+    # note that ALL of parent is being metabolized 
+    CL      = tvcl * exp(η[2])
+    Kme     = tvkme  * exp(η[3]) 
+    Vme     = tvvme  * exp(η[4]) # only used in derive block 
+  end
+
+
+  @dynamics begin
+    Central'     = -(CL/Vc)*Central 
+    Metabolite'  =  (CL/Vc)*Central - Kme*Metabolite
+  end
+
+  @derived begin
+    CONC_P = @. Central/Vc
+    CONC_M = @. Metabolite/Vme
+    """
+    Observed Concentration - Parent (uM)
+    """
+    DV_P ~ @. Normal(CONC_P, sqrt(CONC_P^2*σ²_prop))
+    """
+    Observed Concentration - Metabolite (uM)
+    """
+    DV_M ~ @. Normal(CONC_M, sqrt(CONC_M^2*σ²_prop))
+  end
+end
+
+#render(latexify(nonlin_irrev, :dynamics))
+
+param = (
+        tvvc = 5,     
+        tvcl = 0.5, 
+        tvkme = 0.2,
+        tvvme = 0.3,
+        Ω = Diagonal([0.0,0.0,0.0,0.0]),
+        σ²_prop = 0)
+#
+ev  = DosageRegimen(200, time = 0, cmt=1)
+sub = Subject(id = 1, events = ev)
+sim_sub_lin = simobs(lin_met, sub, param, obstimes = 0.0001:0.1:120)
+
+sim_plot(sim_sub_lin, 
+        observations = [:CONC_P], 
+        linewidth = 4,
+        color = :redsblues,
+        axis = (xlabel = "Time (hr)", 
+                ylabel = "Concentration (mg/L)",
+                yscale = log10))
+#
+```
+
+
+
+
+
+
+
+
+
+## Reversible Metabolism 
+```julia 
+
+
+lin_rev = @model begin
+  @metadata begin
+    desc         = "Reversible Metabolism (1CMT PARENT, 1CMT METAB)"
+    timeu        = u"hr"
+  end
+
+  @param begin
+    "Bioavailability"
+    tvbio ∈ RealDomain(lower = 0.0001, upper=1.0)
+    "Absorption Rate Constant (1/hr)"
+    tvka ∈ RealDomain(lower = 0.0001)
+    "Total Body Clearance - Parent (L/hr)"
+    tvcl        ∈ RealDomain(lower=0.0001)
+    "Volume of Central Compartment - Parent (L)"
+    tvvc        ∈ RealDomain(lower=0.0001)
+    "Total Body Clearance - Metabolite (L/hr)"
+    tvclm        ∈ RealDomain(lower=0.0001)
+    "Volume of Central Compartment - Metabolite (L)"
+    tvvcm        ∈ RealDomain(lower=0.0001)
+    "Conversion from Parent to Metabolite (L/hr)"
+    tvclpm      ∈ RealDomain(lower=0.0001)
+    "Conversion from Metabolite to Parent (L/hr)"
+    tvclmp      ∈ RealDomain(lower=0.0001)
+    Ω           ∈ PDiagDomain(6)
+    "Proportional RUV"
+    σ²_prop     ∈ RealDomain(lower=0.0001)
+  end
+
+  @random begin
+    η            ~ MvNormal(Ω)
+  end
+
+  @pre begin
+    Ka     = tvka 
+    CL     = tvcl   * exp(η[1])
+    Vc     = tvvc   * exp(η[2])
+    CLm    = tvclm  * exp(η[3])
+    Vm     = tvvcm  * exp(η[4])
+    CLpm   = tvclpm  * exp(η[5])
+    CLmp   = tvclmp  * exp(η[6])
+  end
+
+  @dosecontrol begin
+    bioav = (Depot = tvbio,)
+  end
+
+  @dynamics begin
+      Depot'      = -Ka*Depot
+      Central'    =  Ka*Depot -(CL/Vc)*Central - (CLpm/Vc)*Central + (CLmp/Vm)*Metabolite
+      Metabolite' = -(CLm/Vm)*Metabolite + (CLpm/Vc)*Central - (CLmp/Vm)*Metabolite
+  end
+
+  @derived begin
+    CONC_P = @. Central/Vc
+    CONC_M = @. Metabolite/Vm
+    """
+    Observed Concentration - Parent 
+    """
+    DV_P ~ @. Normal(CONC_P, sqrt(CONC_P^2*σ²_prop))
+    """
+    Observed Concentration - Metabolite (uM)
+    """
+    DV_M ~ @. Normal(CONC_M, sqrt(CONC_M^2*σ²_prop))
+  end
+end
+
+
+#render(latexify(lin_rev, :dynamics))
+
+param = (
+        tvka = 0.52,
+        tvbio=0.75,
+        tvcl = 1,
+        tvvc = 20,     
+        tvclm = 0.4,
+        tvvcm = 10,
+        tvclpm = 2,
+        tvclmp = 0.1,
+        Ω = Diagonal([0.0,0.0,0.0,0.0,0.0,0.0]),
+        σ²_prop = 0)
+#
+ev  = DosageRegimen(60, time = 0, cmt=1)
+sub = Subject(id = 1, events = ev)
+sim_sub = simobs(lin_rev, sub, param, obstimes = 0.0001:0.1:48)
+
+sim_plot(sim_sub, 
+        observations = [:CONC_P,:CONC_M], 
+        linewidth = 4,
+        color = :redsblues,
+        axis = (xlabel = "Time (hr)", 
+                ylabel = "Concentration (mg/L)"))
+#
+```
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+# Sequential vs Simultaneous 
+## Simultaneous Parent-Metabolite Fitting
+```julia 
+
+
+pkdata = CSV.read("parent_met.csv", DataFrame; missingstring=["NA",""])
+
+pop_parent_met = read_pumas(pkdata,
+                  id=:ID,
+                  time=:TIME,
+                  amt=:AMT,
+                  observations = [:DV_P, :DV_M],
+                  cmt=:CMT,
+                  evid=:EVID,
+                  rate=:RATE)
+#
+
+mdl_parent_met = @model begin
+  @metadata begin
+    desc         = "Simultaneous: Parent & Metabolite Model"
+    timeu        = u"hr"
+  end
+
+  @param begin
+    "Total Body Clearance - Parent (L/hr)"
+    tvcl        ∈ RealDomain(lower=0.0001)
+    "Volume of Central Compartment - Parent (L)"
+    tvvc        ∈ RealDomain(lower=0.0001)
+    "Intercompartmental Clearance - Parent (L/hr)"
+    tvq         ∈ RealDomain(lower=0.0001)
+    "Volume of Peripheral Compartment - Parent (L)"
+    tvvp        ∈ RealDomain(lower=0.0001)
+    "Conversion from Parent to Metabolite (L/hr)"
+    tvclfm      ∈ RealDomain(lower=0.0001)
+    "Total Body Clearance - Metabolite (L/hr)"
+    tvclm       ∈ RealDomain(lower=0.0001)
+    "Volume of Central Compartment - Metabolite (L)"
+    tvvcm       ∈ RealDomain(lower=0.0001)
+    "BSV" 
+    Ω           ∈ PDiagDomain(7)
+    "Proportional RUV"
+    σ²_prop     ∈ RealDomain(lower=0.0001)
+  end
+
+  @random begin
+    η ~ MvNormal(Ω)
+  end
+
+  @pre begin
+    CL      = tvcl   * exp(η[1])
+    Vc      = tvvc   * exp(η[2])
+    Q       = tvq    * exp(η[3])
+    Vp      = tvvp   * exp(η[4])
+    CLm     = tvclm  * exp(η[5])
+    Vm      = tvvcm  * exp(η[6])
+    CLfm    = tvclfm * exp(η[7])
+  end
+
+  @dynamics begin
+      Central'     = -(CL/Vc)*Central - (Q/Vc)*Central + (Q/Vp)*Peripheral - (CLfm/Vc)*Central 
+      Peripheral'  =                    (Q/Vc)*Central - (Q/Vp)*Peripheral
+      Metabolite'  =  (CLfm/Vc)*Central - (CLm/Vm)*Metabolite
+  end
+
+  @derived begin
+    CONC_P = @. Central/Vc
+    CONC_M = @. Metabolite/Vm
+
+    DV_P ~ @. Normal(CONC_P, sqrt(CONC_P^2*σ²_prop))
+    DV_M ~ @. Normal(CONC_M, sqrt(CONC_M^2*σ²_prop))
+  end
+end
+
+
+#
+params_parent_met = ( tvvc = 45,
+          tvcl        = 3,
+          tvq         = 0.2, 
+          tvvp        = 10,
+          tvclfm      = 12, 
+          tvclm       = 0.5, 
+          tvvcm       = 15,
+          Ω    = Diagonal([0.04,0.04,0.04,0.04,0.04,0.04,0.04]),
+          σ²_prop = 0.04)
+#
+
+
+pkfit_parent_met_sim = fit(mdl_parent_met,
+                pop_parent_met,
+                params_parent_met,
+                Pumas.FOCE())
+#
+
+pred_parent_met_sim = predict(pkfit_parent_met_sim, obstimes=0:0.1:72)
+sf_sim = subject_fits(pred_parent_met_sim, 
+              separate = true, 
+              columns = 2, rows = 2, paginate = true,
+              facet = (combinelabels = true,),
+              figure = (resolution = (1400, 1000),fontsize = 36),
+              axis = (ylabel = "Observed\nPredicted drugY (mg/L)",
+              ytickformat=x -> string.(round.(x; digits=1)), 
+                                            ygridwidth = 3, 
+                                            yminorgridcolor = :darkgrey,
+                                            yminorticksvisible = true,
+                                            yminorgridvisible = true,
+                                            yminorticks = IntervalsBetween(10),
+                                            xminorticksvisible = true,
+                                            xminorgridvisible = true,
+                                            xminorticks = IntervalsBetween(5),
+                                            #limits = (0, 24, nothing, nothing),
+                                            spinewidth = 2))  
+sf_sim[1]
+```
+
+
+
+
+
+
+
+
+
+## Sequential Parent-Metabolite Fitting
+1. Perform model fitting for parent drug ONLY 
+2. Fix all parent drug PK parameters 
+3. Fit & estimate only metabolite PK parameters 
+
+
+## Perform Fitting for Parent Drug Only 
+```julia 
+
+pkdata = CSV.read("parent_met.csv", DataFrame; missingstring=["NA",""])
+
+pop_parent = read_pumas(pkdata,
+                  id=:ID,
+                  time=:TIME,
+                  amt=:AMT,
+                  observations = [:DV_P],
+                  cmt=:CMT,
+                  evid=:EVID,
+                  rate=:RATE)
+#
+
+mdl_parent = @model begin
+  @metadata begin
+    desc         = "Sequential: Parent Model Only"
+    timeu        = u"hr"
+  end
+
+  @param begin
+    "Total Body Clearance - Parent (L/hr)"
+    tvcl        ∈ RealDomain(lower=0.0001)
+    "Volume of Central Compartment - Parent (L)"
+    tvvc        ∈ RealDomain(lower=0.0001)
+    "Intercompartmental Clearance - Parent (L/hr)"
+    tvq         ∈ RealDomain(lower=0.0001)
+    "Volume of Peripheral Compartment - Parent (L)"
+    tvvp        ∈ RealDomain(lower=0.0001)
+    Ω_p         ∈ PDiagDomain(4)
+    "Proportional RUV"
+    σ²_prop_p   ∈ RealDomain(lower=0.0001)
+  end
+
+  @random begin
+    η_p ~ MvNormal(Ω_p)
+  end
+
+  @pre begin
+    CL      = tvcl   * exp(η_p[1])
+    Vc      = tvvc   * exp(η_p[2])
+    Q       = tvq    * exp(η_p[3])
+    Vp      = tvvp   * exp(η_p[4])
+  end
+
+  @dynamics begin
+      Central'     = -(CL/Vc)*Central - (Q/Vc)*Central + (Q/Vp)*Peripheral 
+      Peripheral'  =                    (Q/Vc)*Central - (Q/Vp)*Peripheral
+  end
+
+  @derived begin
+    CONC_P = @. Central/Vc
+    DV_P ~ @. Normal(CONC_P, sqrt(CONC_P^2*σ²_prop_p))
+  end
+end
+
+
+params_parent = ( tvvc = 44.9,
+          tvcl        = 15.2,
+          tvq         = 0.15, 
+          tvvp        = 9.88,
+          Ω_p           = Diagonal([0.04,0.04,0.04,0.04]),
+          σ²_prop_p = 0.01)
+#
+
+pkfit_parent = fit(mdl_parent,
+                        pop_parent,
+                        params_parent,
+                        Pumas.FOCE())
+#
+
+pred_parent = predict(pkfit_parent, obstimes=0:0.1:24)
+sf_parent = subject_fits(pred_parent, 
+              separate = true, 
+              columns = 2, rows = 2, paginate = true,
+              facet = (combinelabels = true,),
+              figure = (resolution = (1400, 1000),fontsize = 36),
+              axis = (ylabel = "Observed\nPredicted drugY (mg/L)",
+              ytickformat=x -> string.(round.(x; digits=1)), 
+                                            ygridwidth = 3, 
+                                            yminorgridcolor = :darkgrey,
+                                            yminorticksvisible = true,
+                                            yminorgridvisible = true,
+                                            yminorticks = IntervalsBetween(10),
+                                            xminorticksvisible = true,
+                                            xminorgridvisible = true,
+                                            xminorticks = IntervalsBetween(5),
+                                            limits = (0, 18, nothing, nothing),
+                                            spinewidth = 2))  
+sf_parent[1]
+```
+
+
+
+
+
+
+
+
+
+# Data Wrangling for Metabolite Fitting 
+  1. Create a dataframe with individual parent PK parameters for each subject 
+  2. Join our PK data with metabolite concentrations with individual PK parameter dataframe 
+      *These individual parent PK parameters will be read in like covariates! 
+```julia 
+
+insp_parent = DataFrame(inspect(pkfit_parent))
+
+# create a dataframe of only subject ID and individiual parent PK parameters 
+param_parent = dropmissing!(select(insp_parent, [:id, :CL, :Vc, :Q, :Vp]))
+  rename!(param_parent,:id => :ID, 
+                      :CL => :iCL, 
+                      :Vc => :iVc, 
+                      :Q  => :iQ, 
+                      :Vp => :iVp)
+
+param_parent[!,:ID] = parse.(Int,param_parent[!,:ID])
+  sort!(param_parent,[:ID])
+
+# join our pkdata with each of these individual parameters 
+pkdata_v2 = leftjoin(pkdata, param_parent, on = :ID)
+
+```
+
+
+
+
+
+
+
+# Now Fit Parent Estimates & Run for Metabolite 
+```julia 
+
+pop_parent_met = read_pumas(pkdata_v2,
+                  id=:ID,
+                  time=:TIME,
+                  amt=:AMT,
+                  observations = [:DV_P, :DV_M],
+                  covariates = [:iCL, :iVc, :iQ, :iVp],
+                  cmt=:CMT,
+                  evid=:EVID,
+                  rate=:RATE)
+#
+
+
+mdl_parent_met = @model begin
+  @metadata begin
+    desc         = "Sequential: Parent & Metabolite Model"
+    timeu        = u"hr"
+  end
+
+  @param begin
+    "Fraction Converted from Parent to Metabolite (L/hr)"
+    tvfmet      ∈ RealDomain(lower=0.0001)
+    "Total Body Clearance - Metabolite (L/hr)"
+    tvclm       ∈ RealDomain(lower=0.0001)
+    "Volume of Central Compartment - Metabolite (L)"
+    tvvcm       ∈ RealDomain(lower=0.0001)
+    "Metabolite BSV" 
+    Ω_m           ∈ PDiagDomain(2)
+    "Proportional RUV - Parent"
+    σ²_prop_p     ∈ RealDomain(lower=0.0001)
+    "Proportional RUV - Metabolite"
+    σ²_prop_m     ∈ RealDomain(lower=0.0001)
+  end
+
+  @random begin
+    η_m ~ MvNormal(Ω_m)
+  end
+
+  @covariates iCL iVc iQ iVp
+
+  @pre begin
+    CL      = iCL
+    Vc      = iVc
+    Q       = iQ
+    Vp      = iVp
+    Fmet    = tvfmet 
+    CLfm    = Fmet   * CL 
+    CLm     = tvclm  * exp(η_m[1])
+    Vm      = tvvcm  * exp(η_m[2])
+  end
+
+  @dynamics begin
+      Central'     = -((CL*(1-Fmet))/Vc)*Central - (Q/Vc)*Central + (Q/Vp)*Peripheral - (CLfm/Vc)*Central 
+      Peripheral'  =                               (Q/Vc)*Central - (Q/Vp)*Peripheral
+      Metabolite'  =  (CLfm/Vc)*Central - (CLm/Vm)*Metabolite
+  end
+
+  @derived begin
+    CONC_P = @. Central/Vc
+    CONC_M = @. Metabolite/Vm
+
+    DV_P ~ @. Normal(CONC_P, sqrt(CONC_P^2*σ²_prop_p))
+    DV_M ~ @. Normal(CONC_M, sqrt(CONC_M^2*σ²_prop_m))
+  end
+end
+
+params_parent_met = (
+          tvfmet      = 0.8, 
+          tvclm       = 0.5, 
+          tvvcm       = 15,
+          Ω_m    = Diagonal([0.1,0.1]),
+          σ²_prop_p = 0.01,
+          σ²_prop_m = 0.01)
+#
+
+
+pkfit_parent_met_seq = fit(mdl_parent_met,
+                pop_parent_met,
+                params_parent_met,
+                Pumas.FOCE())
+#
+comp_est = compare_estimates(; pkfit_parent_met_seq, pkfit_parent_met_sim) 
+
+pred_parent_met_seq = predict(pkfit_parent_met_seq, obstimes=0:0.1:72)
+sf_seq = subject_fits(pred_parent_met_seq, 
+              separate = true, 
+              columns = 2, rows = 2, paginate = true,
+              facet = (combinelabels = true,),
+              figure = (resolution = (1400, 1000),fontsize = 36),
+              axis = (ylabel = "Observed\nPredicted drugY (mg/L)",
+              ytickformat=x -> string.(round.(x; digits=1)), 
+                                            ygridwidth = 3, 
+                                            yminorgridcolor = :darkgrey,
+                                            yminorticksvisible = true,
+                                            yminorgridvisible = true,
+                                            yminorticks = IntervalsBetween(10),
+                                            xminorticksvisible = true,
+                                            xminorgridvisible = true,
+                                            xminorticks = IntervalsBetween(5),
+                                            #limits = (0, 24, nothing, nothing),
+                                            spinewidth = 2))  
+sf_seq[1]
+sf_sim[1]
+```
+
+
